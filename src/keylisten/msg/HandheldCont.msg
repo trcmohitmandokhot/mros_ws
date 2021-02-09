@@ -1,0 +1,4 @@
+float32 drive_pedal
+float32 brake_pedal
+float32 steering_wheel
+uint8 control_mode
