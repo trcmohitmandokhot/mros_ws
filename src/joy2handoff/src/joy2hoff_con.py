@@ -1,7 +1,8 @@
 #!/usr/bin/env python
 # Package converts standard ROS joy messages into structure needed by handoff.py node
 # Uses custom message structure. Adds dbw_enabled check functionality.
-# Version 0.0.2
+# Adds initpose functionality using joystick. 
+# Version 0.0.3
 # Date 02/08/2021
 # Anmol Sidhu, Mohit Mandokhot
 
@@ -9,6 +10,7 @@ import rospy
 from joy2handoff.msg import JoyCont, JoyInst
 from std_msgs.msg import Bool
 from sensor_msgs.msg import Joy
+from geometry_msgs.msg import PoseWithCovarianceStamped
 
 def joy2hoff_con():
 	
@@ -21,7 +23,16 @@ def joy2hoff_con():
 	
 	rospy.init_node('joy2hoff_con', anonymous=True)
 
+        global INIT_POSE_X, INIT_POSE_Y, INIT_POSE_H, INIT_POSE_W	
+
 	dbw_enabled = Bool()
+	pose_reset = False
+
+	# Load with launch file. (Not sure how this works if no launch file, maybe pass constants?)
+        INIT_POSE_X = rospy.get_param("/am_ds_handoff/INIT_POSE_X")
+        INIT_POSE_Y = rospy.get_param("/am_ds_handoff/INIT_POSE_Y")
+        INIT_POSE_H = rospy.get_param("/am_ds_handoff/INIT_POSE_H")
+        INIT_POSE_W = rospy.get_param("/am_ds_handoff/INIT_POSE_W")
 
 	def rec_dbw_enabled(data):
 		if data:
@@ -30,7 +41,7 @@ def joy2hoff_con():
 			print("2. Platform DBW Disabled")
 		dbw_enabled = data
 
-	# Accept data published by ROS joy_node 
+	# Accept data published by ROS joy_node. Run this when /joy is received 
 	def recd_rosjoyval(data):
 		recd_msgbuttons = data.buttons	#int32[]
 		recd_msgaxes = data.axes	#float32[]
@@ -41,7 +52,7 @@ def joy2hoff_con():
 		publish_cont(recd_msgaxes)
 
 	# Read Joystick Buttons. Determine content. Publish JoyInst message.
-	# 
+	# If buttons[9] and buttons[10] pressed - Publish initpose
 	# Output four modes - enable, disable, manual, automated
 	# Button Maps - buttons[7], buttons[6], buttons[2], buttons[0]. See js_image
 	def publish_discrete(data, dbw_state):
@@ -65,10 +76,24 @@ def joy2hoff_con():
 		if data[0] == 1:
 		    sent_msgbuttons.automated = True
 		    pub_joy_inst.publish(sent_msgbuttons)
+		# Publish initial pose when both sticks are pressed (acts as buttons?)
+		if not pose_reset and data[9] == 1 and data[10] == 1: # both sticks(?) pressed
+		    pose_reset = True
+		    initialpose.header.frame_id = "world"
+		    initialpose.pose.pose.position.x = INIT_POSE_X
+		    initialpose.pose.pose.position.y = INIT_POSE_Y
+		    initialpose.pose.pose.position.z = 0.0
+		    initialpose.pose.pose.orientation.x = 0.0
+		    initialpose.pose.pose.orientation.y = 0.0
+		    initialpose.pose.pose.orientation.z = INIT_POSE_H
+		    initialpose.pose.pose.orientation.w = INIT_POSE_W
+		    initialpose.pose.covariance = [0.25, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.25, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.068]
+		    pub_initialpose.publish(initialpose)
+
 
 	# Recieve axes data from joystick. Convert to JoyCont() message type
 	# Output message left, right, fore, aft
-	# Assume Left Stick - Left/Right Control | Right Stick - Fore/Aft Control	
+	# Assume Left Stick - Left/Right Control | Right Stick - Fore/Aft Control
 	def publish_cont(data):
 		# Recieve data in float32[] list format. Confirm length of list
 		len_msg = len(data)
@@ -118,6 +143,11 @@ def joy2hoff_con():
 	joy_inst = JoyInst()
         pub_joy_inst = rospy.Publisher('/am/joy_inst', JoyInst, queue_size=1)
         pub_joy_cont = rospy.Publisher('/am/joy_cont', JoyCont, queue_size=1)
+        # Initial pose
+        initialpose = PoseWithCovarianceStamped()
+        pub_initialpose = rospy.Publisher('/initialpose', PoseWithCovarianceStamped, queue_size=1)
+
+
 
 	""" Publish data based on signals recieved """
 	while not rospy.is_shutdown():
